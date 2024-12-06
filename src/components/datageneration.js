@@ -27,6 +27,22 @@ export default function DataGeneration() {
     reader.readAsText(selectedFile);
   };
 
+  const validateSchema = (schema) => {
+    try {
+        const parsedSchema = JSON.parse(schema);
+        // Check if parsedSchema is an object and contains valid field types
+        const validFieldTypes = [
+            "timestamp", "user_id", "application_type", 
+            "signal_strength", "latency", 
+            "required_bandwidth", "allocated_bandwidth", 
+            "resource_allocation"
+        ];
+        return Object.values(parsedSchema).every(type => validFieldTypes.includes(type));
+    } catch (e) {
+        return false;
+    }
+  };
+
   const handleFileUploadAndDownload = async () => {
     const formData = new FormData();
 
@@ -45,6 +61,11 @@ export default function DataGeneration() {
     formData.append("mode", mode);
     formData.append("custom_filename", customFilename || "output");
 
+    // Log the formData content
+    for (let [key, value] of formData.entries()) {
+      console.log(`${key}:`, value);
+    }
+
     try {
       const response = await apiClient.post(
         "/data_generation/generate-csv",
@@ -55,13 +76,15 @@ export default function DataGeneration() {
           },
         }
       );
+      console.log("Response:", response.data);
       setMessage(response.data.message);
       setFilename(response.data.output_file);
 
+      // Trigger the download
       await handleDownloadCSV(response.data.output_file);
     } catch (error) {
+      console.error("Error uploading file:", error);
       setMessage("Error uploading file");
-      console.error(error);
     }
   };
 
@@ -78,32 +101,14 @@ export default function DataGeneration() {
           responseType: "blob",
         }
       );
-      // const url = window.URL.createObjectURL(new Blob([response.data]));
-      // const link = document.createElement("a");
-      // link.href = url;
-      // link.setAttribute("download", filename); // Use the filename from the upload
-      // document.body.appendChild(link);
-      // link.click();
-      // document.body.removeChild(link); // Clean up after download
 
-      const reader = new FileReader();
-      reader.onload = function (e) {
-        const text = e.target.result;
-        Papa.parse(text, {
-          header: true,
-          complete: function (results) {
-            const newData = results.data;
-
-            // Check if newData is the same as lastAppendedRef to avoid duplication
-            const newContent = JSON.stringify(newData);
-            if (lastAppendedRef.current !== newContent) {
-              setCsvContent((prev) => [...prev, ...newData]);
-              lastAppendedRef.current = newContent;
-            }
-          },
-        });
-      };
-      reader.readAsText(new Blob([response.data]));
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", filename); // Use the filename from the upload
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link); // Clean up after download
     } catch (error) {
       setMessage("Error downloading file");
       console.error(error);

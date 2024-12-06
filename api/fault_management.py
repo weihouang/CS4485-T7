@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import List
 import sqlite3
 import os
+import logging
 
 app = FastAPI()
 
@@ -370,15 +371,20 @@ def get_notifications():
     """
     
     
-    print(f"Selected Database: {selected_database}")
+    # print(f"Selected Database: {selected_database}")
+    # print(faults_database_path)
+    # print(os.path.exists(faults_database_path))
     if not selected_database:
         raise HTTPException(status_code=400, detail="No database selected")
 
     faults_database_path = get_db_path(selected_database, "faults.db")
 
-    print(faults_database_path)
+    logging.basicConfig(level=logging.INFO)  # Set the logging level
 
-    print(os.path.exists(faults_database_path))
+    # Replace print statements with logging
+    logging.debug(faults_database_path)
+    logging.debug(os.path.exists(faults_database_path))
+
     # Ensure faults.db exists
     if not os.path.exists(faults_database_path):
         raise HTTPException(status_code=404, detail="Faults database was not found")
