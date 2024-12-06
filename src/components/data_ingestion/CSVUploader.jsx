@@ -18,6 +18,7 @@ const CSVUploader = () => {
   const fetchDatabases = async () => {
     try {
       const response = await apiClient.get('/data_ingestion/databases');
+      console.log('Databases fetched:', response.data);
       const databases = response.data;
       const options = databases.map(db => ({ label: db.name, value: db.id }));
       setDatabaseOptions(options);
@@ -29,6 +30,7 @@ const CSVUploader = () => {
   const fetchTables = async (databaseId) => {
     try {
       const response = await apiClient.get(`/data_ingestion/tables/${databaseId}`);
+      console.log('Tables fetched for database', databaseId, ':', response.data);
       const tables = response.data;
       const options = tables.map(table => ({ label: table, value: table }));
       setTableOptions(options);

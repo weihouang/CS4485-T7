@@ -28,14 +28,26 @@ load_dotenv('.env.local')
 load_dotenv()
 
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
+
 # AWS Configuration
 AWS_S3_BUCKET_NAME = 'senior-design-utd' 
 AWS_REGION = 'us-east-1'
 AWS_ACCESS_KEY = os.getenv('AWS_ACCCES_KEY') # from IAM user
 AWS_SECRET_KEY = os.getenv('AWS_SECRET_ACCESS_KEY') # from IAM user
 
-# DB setupc
-engine = create_engine("sqlite:///./Databases/database_sample_data.db")
+# DB setup
+DB_DIR = os.path.join(os.path.dirname(__file__), "Databases")
+os.makedirs(DB_DIR, exist_ok=True)
+
+DB_PATH = os.path.join(DB_DIR, "database_sample_data.db")
+engine = create_engine(f"sqlite:///{DB_PATH}")
+
+try:
+    engine.connect()
+    print("Connection to the database was successful")
+except SQLAlchemyError as e:
+    print(f"Connection to the database failed: {e}")
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -157,11 +169,19 @@ def list_databases(db: Session = Depends(get_db)):
 
 @app.post("/databases", response_model=DatabaseResponse)
 def create_database(database: DatabaseCreate, db: Session = Depends(get_db)):
-    db_database = Database(**database.dict())
-    db.add(db_database)
-    db.commit()
-    db.refresh(db_database)
-    return db_database
+    try:
+        # Create a new database entry with the specified connection string
+        db_database = Database(
+            name=database.name,
+            connection_string=database.connection_string
+        )
+        db.add(db_database)
+        db.commit()
+        db.refresh(db_database)
+        return db_database
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/tables/{database_id}")
 def list_tables(database_id: int, db: Session = Depends(get_db)):
@@ -197,18 +217,27 @@ async def upload_csv(
 ):
     try:
         contents = await file.read()
-
-        file.file.seek(0) # reset file pointer to start of file
+        file.file.seek(0)  # reset file pointer to start of file
         
-        if file: 
-            upload_response = s3_client.upload_fileobj(file.file, AWS_S3_BUCKET_NAME, file.filename)
-
+        # Only attempt S3 upload if credentials are available
+        upload_response = None
+        if AWS_ACCESS_KEY and AWS_SECRET_KEY:
+            try:
+                upload_response = s3_client.upload_fileobj(
+                    file.file, 
+                    AWS_S3_BUCKET_NAME, 
+                    file.filename
+                )
+            except Exception as e:
+                print(f"S3 upload failed: {str(e)}")
+                # Continue with local processing even if S3 upload fails
+        
         df = pd.read_csv(io.StringIO(contents.decode('utf-8')))
         
         # Check if the database exists, if not create it
         database = db.query(Database).filter(Database.name == database_name).first()
         if not database:
-            new_db_path = f"{database_name}.sqlite"
+            new_db_path = os.path.join(DB_DIR, f"{database_name}.db")
             new_db_url = f"sqlite:///{new_db_path}"
             database = Database(name=database_name, connection_string=new_db_url)
             db.add(database)
@@ -230,7 +259,7 @@ async def upload_csv(
         return {
             "message": "CSV uploaded and processed successfully",
             "database": database_name,
-            "uploads3response": upload_response,
+            "s3_upload": "Success" if upload_response is not None else "Skipped",
             "table": table_name,
             "rows": len(df),
             "columns": list(df.columns)
@@ -250,6 +279,37 @@ async def test_api(request: APIRequest):
         )
     
     return result
+
+def init_db():
+    try:
+        # Create the databases table
+        Base.metadata.create_all(bind=engine)
+        
+        # Create a session
+        db = SessionLocal()
+        
+        try:
+            # Check if sample database exists
+            sample_db = db.query(Database).filter(Database.name == "sample_data").first()
+            
+            if not sample_db:
+                # Create sample database using the specified path
+                sample_db = Database(
+                    name="sample_data",
+                    connection_string=f"sqlite:///{DB_PATH}"
+                )
+                db.add(sample_db)
+                db.commit()
+                print("Sample database created successfully")
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        print(f"Error initializing database: {e}")
+
+# Initialize the database
+init_db()
 
 if __name__ == "__main__":
     import uvicorn

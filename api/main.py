@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from data_ingestion import app as data_ingestion_app
 from dashboarding import app as dashboarding_app
 # from data_pipelining import app as data_pipelining_app
 from data_generation import app as data_generation_app
@@ -40,8 +41,8 @@ async def jwt_authentication_middleware(request: Request, call_next):
         response = await call_next(request)
         return response
 
-    # Bypass authentication for KPI management endpoints during development
-    if request.url.path.startswith("/kpi_management/api/"):
+    # Pass authentication for KPI
+    if request.url.path.startswith("/kpi_management"):
         response = await call_next(request)
         return response
 
@@ -121,8 +122,8 @@ app.mount("/data_generation", data_generation_app)
 app.mount("/eda", eda_app)
 app.mount("/fault_management", fault_management_app)
 app.mount("/kpi_management", kpi_management_app)
+app.mount("/data_ingestion", data_ingestion_app)
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=5000)
-
