@@ -8,26 +8,23 @@ import logging
 
 app = FastAPI()
 
-selected_database = "db2"
-
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
-app = FastAPI()
-
-# Allow requests from 'http://localhost:3000' only
-origins = [
-    "http://localhost:3000",  # Allow your React app's frontend URL
-]
-
+# Configure CORS once
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,  # Allows specific origins
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all HTTP methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
-  
+
+# Add request logging middleware
+@app.middleware("http")
+async def log_requests(request, call_next):
+    print(f"Incoming request: {request.method} {request.url}")
+    response = await call_next(request)
+    return response
+
+selected_database = "db2"
 
 # Model for adding a new alert
 class Alert(BaseModel):
@@ -41,37 +38,43 @@ def get_db_path(database: str, file_name: str):
     """
     Helper function to get the full path of the database file.
     """
-    return f'../databases/{database}/{file_name}'
+    # Get the absolute path to the project root directory
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_path = os.path.join(project_root, "Databases")
+    
+    # Debug prints
+    print(f"Project root: {project_root}")
+    print(f"Base path: {base_path}")
+    print(f"Database: {database}")
+    print(f"File name: {file_name}")
+    
+    # Create the Databases directory if it doesn't exist
+    os.makedirs(base_path, exist_ok=True)
+    
+    if file_name == f"{database}.db":
+        # For the main database file
+        full_path = os.path.join(base_path, "database_sample_data.db")
+    else:
+        # For alerts.db and faults.db - store them in the same directory
+        full_path = os.path.join(base_path, file_name)
+    
+    print(f"Full database path: {full_path}")
+    print(f"Path exists: {os.path.exists(full_path)}")
+    return full_path
 
 @app.get("/list_databases")
 def list_databases():
     """
-    Returns the list of available databases (subdirectories) in the 'databases' directory.
+    Returns the list of available databases.
     """
-    database_dir = '../databases'
-    print("testing")
-    print(database_dir)
-    try:
-        print(os.path.exists(database_dir))
-
-        if not os.path.exists(database_dir):
-            raise HTTPException(status_code=500, detail="Databases directory not found")
-
-        # List all subdirectories (representing databases) in the 'databases' directory
-        databases = [
-            f for f in os.listdir(database_dir)
-            if os.path.isdir(os.path.join(database_dir, f))  # Ensure it's a directory
-        ]
-        return {"databases": databases}
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"databases": ["database_sample_data"]}
 
 @app.get("/columns_from_db")
-def get_columns(database: str):
+def get_columns(database: str, table: str):
     """
-    Returns the list of column names from a specific table in the selected database, excluding the first 3 columns.
+    Returns the list of column names from the specified table in the database.
     """
+    print(f"Getting columns for database: {database}, table: {table}")  # Debug print
     database_path = get_db_path(database, f"{database}.db")
     
     if not os.path.exists(database_path):
@@ -81,30 +84,38 @@ def get_columns(database: str):
         conn = sqlite3.connect(database_path)
         cursor = conn.cursor()
 
-        # Query to get the columns from the 'alerts' table
-        cursor.execute("PRAGMA table_info(alerts);")
+        # Query to get the columns from the specified table
+        cursor.execute(f"PRAGMA table_info({table});")
         columns = cursor.fetchall()
 
         if not columns:
-            raise HTTPException(status_code=404, detail="Table 'alerts' not found in the database")
+            raise HTTPException(status_code=404, detail=f"Table '{table}' not found in the database")
 
-        # Extracting just the column names, excluding the first 3 columns
-        column_names = [column[1] for column in columns[3:]]  # Skip first 3 columns
-
+        # Extract only numeric columns that can be monitored
+        monitorable_columns = [
+            column[1] for column in columns
+            if column[2].upper() in ('REAL', 'INTEGER', 'FLOAT', 'NUMERIC')
+        ]
+        
+        print(f"Found columns: {monitorable_columns}")  # Debug print
         conn.close()
-        return {"columns": column_names}
+        return {"columns": monitorable_columns}
 
     except Exception as e:
+        print(f"Error in get_columns: {str(e)}")  # Debug print
         raise HTTPException(status_code=500, detail=f"Error fetching columns: {str(e)}")
 
-@app.get("/get_alerts")
+@app.get("/alerts")
 def get_alerts(database: str):
     """
     Returns a list of alerts for a specific database.
     """
+    print(f"Getting alerts for database: {database}")
     database_path = get_db_path(database, "alerts.db")
+    print(f"Using alerts database path: {database_path}")
     
     if not os.path.exists(database_path):
+        print(f"Alerts database not found at: {database_path}")
         raise HTTPException(status_code=404, detail="Alerts database not found")
 
     try:
@@ -112,11 +123,12 @@ def get_alerts(database: str):
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM alerts")
         alerts = cursor.fetchall()
+        print(f"Found {len(alerts)} alerts")
         conn.close()
 
         alert_list = [
             {
-                "id": alert[0],  # Assuming the first column is the alert ID
+                "id": alert[0],
                 "alert_title": alert[1],
                 "alert_message": alert[2],
                 "field_name": alert[3],
@@ -129,6 +141,7 @@ def get_alerts(database: str):
         return {"alerts": alert_list}
 
     except Exception as e:
+        print(f"Error fetching alerts: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching alerts: {str(e)}")
 
 @app.post("/add_alert")
@@ -222,22 +235,28 @@ def get_columns_from_devices(database: str):
         conn = sqlite3.connect(database_path)
         cursor = conn.cursor()
 
-        # Query to get the columns from the 'devices' table
-        cursor.execute("PRAGMA table_info(devices);")
+        # Query to get the columns from the 'kpis' table
+        cursor.execute("PRAGMA table_info(kpis);")
         columns = cursor.fetchall()
 
         if not columns:
-            raise HTTPException(status_code=404, detail="Table 'devices' not found in the database")
+            raise HTTPException(status_code=404, detail="Table 'kpis' not found in the database")
 
-        # Extracting just the column names
-        
-        filtered_columns = [
-                column[1] for column in columns  # column[1] is the column name
-                if column[2].upper() == "REAL" and column[5] == 0  # column[2] is the type, column[5] is PK flag
+        # Extract only numeric columns that can be monitored
+        monitorable_columns = [
+            column[1] for column in columns
+            if column[1] in [
+                "Signal_Strength",
+                "Latency",
+                "Required_Bandwidth",
+                "Allocated_Bandwidth",
+                "Resource_Allocation",
+                "Usage_Limit_GB"
             ]
+        ]
 
         conn.close()
-        return {"columns": filtered_columns}
+        return {"columns": monitorable_columns}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching columns: {str(e)}")
@@ -307,7 +326,7 @@ def detect_faults(request: DetectFaultsRequest):
 
             # Check if the field exists in the main database
             try:
-                cursor_main.execute(f"SELECT {field_name} FROM devices")
+                cursor_main.execute(f"SELECT {field_name} FROM kpis")
                 values = cursor_main.fetchall()
             except sqlite3.OperationalError:
                 continue  # Skip alerts with invalid fields
@@ -416,3 +435,65 @@ def get_notifications():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching notifications: {str(e)}")
+
+@app.get("/tables_from_db")
+def get_tables(database: str):
+    """
+    Returns the list of available tables in the database.
+    """
+    database_path = get_db_path(database, f"{database}.db")
+    
+    if not os.path.exists(database_path):
+        raise HTTPException(status_code=404, detail="Database not found")
+
+    try:
+        conn = sqlite3.connect(database_path)
+        cursor = conn.cursor()
+
+        # Query to get all tables in the database
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = cursor.fetchall()
+        
+        # Extract table names and print for debugging
+        table_list = [table[0] for table in tables]
+        print(f"Found tables: {table_list}")  # Debug print
+        
+        conn.close()
+        return {"tables": table_list}
+
+    except Exception as e:
+        print(f"Error in get_tables: {str(e)}")  # Debug print
+        raise HTTPException(status_code=500, detail=f"Error fetching tables: {str(e)}")
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize databases on startup"""
+    try:
+        # Initialize alerts database
+        alerts_path = get_db_path("database_sample_data", "alerts.db")
+        if not os.path.exists(alerts_path):
+            conn = sqlite3.connect(alerts_path)
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    alert_title TEXT NOT NULL,
+                    alert_message TEXT NOT NULL,
+                    field_name TEXT NOT NULL,
+                    lower_bound REAL NOT NULL,
+                    higher_bound REAL NOT NULL
+                )
+            ''')
+            conn.commit()
+            conn.close()
+            print(f"Alerts database initialized at {alerts_path}")
+        
+        # Verify main database exists
+        main_db_path = get_db_path("database_sample_data", "database_sample_data.db")
+        if not os.path.exists(main_db_path):
+            print(f"WARNING: Main database not found at {main_db_path}")
+        else:
+            print(f"Main database found at {main_db_path}")
+            
+    except Exception as e:
+        print(f"Error during startup initialization: {e}")

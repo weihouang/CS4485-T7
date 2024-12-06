@@ -45,6 +45,10 @@ async def jwt_authentication_middleware(request: Request, call_next):
     if request.url.path.startswith("/kpi_management"):
         response = await call_next(request)
         return response
+    # Pass authentication for Fault Management
+    if request.url.path.startswith("/fault_management"):
+        response = await call_next(request)
+        return response
 
     #print('auth started')
 
