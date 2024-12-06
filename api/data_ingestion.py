@@ -34,8 +34,8 @@ AWS_REGION = 'us-east-1'
 AWS_ACCESS_KEY = os.getenv('AWS_ACCCES_KEY') # from IAM user
 AWS_SECRET_KEY = os.getenv('AWS_SECRET_ACCESS_KEY') # from IAM user
 
-# DB setup
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+# DB setupc
+engine = create_engine("sqlite:///./Databases/database_sample_data.db")
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
